@@ -1,0 +1,577 @@
+---
+title: "Final project"
+author: "Yishan Tan"
+date: "2023-06-07"
+output: html_document
+---
+## Title.
+
+Final project report
+
+
+
+## Abstract.
+
+What will affect a mouse's choice? In this report, I will analyze the neurons，the brain area where they are located when mouse make a decision in a fun test. Also, the success rate related to different visual stimuli levels and Timeline. After that, I will conclude my understanding and make a model for predicting mouse choice.
+
+
+## Introdution.
+
+In this report, I use data collected by Steinmetz et al. (2019) to analyze various factors that may affect the choice of mice and make a model to predict the behavior of mice. The dataset is based on an exciting experiment. Steinmetz et al. are interested in the spatial distribution and association of neurons in the brains of mice's visual and behavioral choices, so they conducted experiments. The experimenter will give visual stimuli of random values (0, 0.25, 0.5, 1) on the left and right of the mouse's screens. If the level on the left is greater than the level on the right, the mouse will turn the wheel to the right, and it will be rewarded; If the level of the level is greater than the level on the right, the mouse will get a reward if it turns the wheel to the left; if both sides are equal and not equal to zero, the reward will randomly appear on the left or right; If both sides are equal and equal to zero, the mouse does not move the wheel, it will be rewarded. 
+
+### Variables.
+In total there are 18 sessions, each session has 8 variables in this dataset:
+  contrast_left: left stimul level
+  
+  contrast_right: right stimuln level
+  
+  feedback_type: -1 means the mouse choose to turning the wheel to the the wrong direction, 1 means the mouse choose to     turning the wheel to the the correct direction and get the reward.
+  
+  mouse_name: the mouse being testing in each session
+  
+  brain_area: brain regions that were activated during the test
+  
+  date_exp: the date the test was taken
+  
+  spks: numbers of spikes of neurons group by time
+  
+  time: every time the data of spks is collected
+  
+
+
+## Exploratory analysis.
+### 1.
+```{r}
+library(tibble)
+library(knitr)
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('/Users/selia/OneDrive/Desktop/STA141/sessions/session',i,'.rds',sep=''))
+}
+
+n.session=length(session)
+
+sess <- tibble(
+  name = rep('name',n.session),
+  date =rep('dt',n.session),
+  area = rep(0,n.session),
+  neurons = rep(0,n.session),
+  trials = rep(0,n.session),
+  success.rate = rep(0,n.session)
+)
+
+
+for(i in 1:n.session){
+  table = session[[i]];
+  sess[i,1]=table$mouse_name;
+  sess[i,2]=table$date_exp;
+  sess[i,3]=length(unique(table$brain_area));
+  sess[i,4]=dim(table$spks[[1]])[1];
+  sess[i,5]=length(table$feedback_type);
+  sess[i,6]=mean(table$feedback_type+1)/2;
+}
+
+kable(sess, caption = "summary")
+
+```
+
+This is the overview of the whole dataset, there is including 6 varibles:
+  name: the mouse is tesing in each session
+  
+  date: the testing date
+  
+  area: number of different brain regions present in each session
+  
+  neurons: the total number of neurons present in each session
+  
+  trials: Testing frequency
+  
+  success.rate: the total number of 1 present in feedback_type
+  
+Then I will introduce the finding that each variable relates to the success rate. The date shows that each mouse will have a higher success rate on the last date than on the first date, but the success rate in the middle is fluctuating, so we may say the mouse can learn during the testing. For the number of brain area, the different mouse has a different conclusion. For Cori, the maximum number of brain areas is related to the highest success rate. For Forssmann, Hench, and Lederberg, the minimum number of brain areas is related to the highest success rate. I don't see any significant association between the number of neurons and trials. So, for the final data frame, date and brain area may include the neurons I will research more later.
+
+### 2.
+
+For the following graph, I will discuss some findings about the mouse's success or wrong frequency during the trials.
+
+
+#### 1. Cori
+```{r}
+for(i in 1:3){
+  plot(1:length(session[[i]]$feedback_type), session[[i]]$feedback_type, type = "l", main = paste0("Session ", i, " ", session[[i]]$mouse_name),xlab = "trials",ylab = "feedback type")
+}
+
+```
+
+For those graphs, I find that session 1 and session 3 had a high number of consecutive successes, and they did not have a higher success rate in later attempts.
+
+
+#### 2. Forssmann
+```{r}
+for(i in 4:7){
+  plot(1:length(session[[i]]$feedback_type), session[[i]]$feedback_type, type = "l", main = paste0("Session ", i, " ", session[[i]]$mouse_name),xlab = "trials",ylab = "feedback type")
+}
+
+```
+
+In the first 200 trials, the continuous success rate is relatively high, but after the 200 trials, the ups and downs fluctuate frequently.
+
+#### 3. Hench
+```{r}
+for(i in 8:11){
+  plot(1:length(session[[i]]$feedback_type), session[[i]]$feedback_type, type = "l", main = paste0("Session ", i, " ", session[[i]]$mouse_name),xlab = "trials",ylab = "feedback type")
+}
+
+```
+
+For Hench, the feedback type is no obvious pattern.
+
+#### 4. Lederberg
+```{r}
+for(i in 12:18){
+  plot(1:length(session[[i]]$feedback_type), session[[i]]$feedback_type, type = "l", main = paste0("Session ", i, " ", session[[i]]$mouse_name),xlab = "trials",ylab = "feedback type")
+}
+
+```
+
+For Lederberg, I find a general pattern; the continuous success rate is relatively high.
+
+
+In conclusion, the trails time may be helpful for  Cori, Forssmann, and Lederberg in the pridict model.
+
+
+### 3.
+
+```{r}
+library(dplyr)
+library(glmnet)
+library(nnet)
+
+data <- data.frame()
+
+for(i in 1:18){
+  ses <- readRDS(paste('/Users/selia/OneDrive/Desktop/STA141/sessions/session',i,'.rds',sep=''))
+  session[[i]] <- ses
+  num <- length(ses$feedback_type)
+  dat <- data.frame(mouse = rep(ses$mouse_name, num),
+                    contrast_left = ses$contrast_left, 
+                    contrast_right = ses$contrast_right, 
+                    feedback_type = ses$feedback_type, 
+                    n_brain_area = rep(length(unique(ses$brain_area)), num), 
+                    mean_spk = unlist(lapply(ses$spks, mean)),
+                    max_spk = unlist(lapply(ses$spks, max)), 
+                    nonzero_spk = unlist(lapply(ses$spks, function(x){sum(x!=0)/nrow(x)/ncol(x)})),
+                    spk_1 = unlist(lapply(ses$spks, function(x){sum(x == 1)/nrow(x)/ncol(x)})))
+  data <- rbind(data, dat)
+}
+
+
+data %>%
+  group_by(mouse, feedback_type) %>%
+  summarise(m = mean(nonzero_spk))
+
+
+data <- data %>%
+  mutate(left_right = ifelse(contrast_left > contrast_right, 1, ifelse(contrast_left == contrast_right, 0, -1)))
+
+data %>%
+  group_by(mouse, left_right) %>%
+  summarise(mean_nonzero = mean(nonzero_spk), mean_feedback = mean(feedback_type))
+
+
+data <- data %>%
+  mutate(feedback_type = ifelse(feedback_type == 1, 1, 0))
+
+data <- data %>%
+  mutate(left_right = case_when(
+    contrast_left > contrast_right ~ "Left Greater", 
+    contrast_left < contrast_right ~ "Right Greater",
+    contrast_left != 0 ~ "Equal, Not Zero",
+    TRUE ~ "Equal, Zero"
+  ))
+```
+
+
+
+In the first table, I calculate the mean of non-zero spks for different feedback types. For all 4 mouses, the mean of non-zero spikes of feedback type 1 is higher than the feedback type -1, which means non-zero spks may be useful variables for prediction.
+In the second table, there 3 variables:
+  left_right: -1: contrast_left < contrast_right; 1: contrast_left > contrast_right; 0: contrast_left ==         contrast_right
+  mean_nonzero: mean of non-zero spks
+  mean_feedback： mean of success rate
+For all 4 mice, when contrast_left < contrast_right, they has the highest mean of non-zero spks. Cori, Hench and Lederberg have the highest success rate when contrast_left > contrast_right for Forssmann; when contrast_left < contrast_right, it has the highest success rate. So the left_right variable may be helpful for the prediction.
+
+
+### 4.
+
+```{r}
+
+library(plyr)
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+  }
+all.trial.summary <- data.frame()
+
+for(i.s in 1:18){
+  n.trial=length(session[[i.s]]$feedback_type)
+  n.area=length(unique(session[[i.s]]$brain_area ))
+  trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+  for(i.t in 1:n.trial){
+    trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                          session[[i.s]]$contrast_left[i.t],
+                          session[[i.s]]$contrast_right[i.s],
+                          i.t)
+  }
+  colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+  trial.summary <- as.data.frame(trial.summary)
+  all.trial.summary <- rbind.fill(all.trial.summary, trial.summary)
+}
+for(i.s in 1:18){
+  n.trial=length(session[[i.s]]$feedback_type)
+  n.area=length(unique(session[[i.s]]$brain_area ))
+  
+  trial.summary <- matrix(nrow=n.trial,ncol= n.area+1+2+1)
+  for(i.t in 1:n.trial){
+    trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                          session[[i.s]]$contrast_left[i.t],
+                          session[[i.s]]$contrast_right[i.s],
+                          i.t)
+  }
+  colnames(trial.summary) <- c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )  
+  trial.summary <- as.data.frame(trial.summary)
+  area.col <- rainbow(n=n.area,alpha=0.7)
+  plot(x=1,y=0, col='white',xlim=c(0,n.trial),ylim=c(0,2.5), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i.s))
+  
+  
+  for(i in 1:n.area){
+    lines(y=trial.summary[[i]],x=trial.summary$id,col=area.col[i],lty=2,lwd=1)
+    lines(smooth.spline(trial.summary$id, trial.summary[[i]]),col=area.col[i],lwd=3)
+  }
+  lines(trial.summary$id, trial.summary$feedback + 1)
+  legend("topright", 
+         legend = colnames(trial.summary)[1:n.area], 
+         col = area.col, 
+         lty = 1, 
+         cex = 0.8
+  )
+}
+
+
+
+```
+
+Cori includes the root brain area in all three sessions, and the higher the root fit, the higher the success rate.
+
+Forssmann's overall average spike counts decreased from the beginning of the test to the end. The session with the highest success rate has the excitation AUD, which is not found in other sessions.
+
+Hench's fit line fluctuated considerably, and session 10, which fluctuated most frequently, stimulated the most brain regions, and the fewer consecutive correct answers, the lowest success rate. On the contrary, session 11, with the smoothest fitting line, stimulated the fewest brain regions and had a higher success rate.
+
+In contrast to Hench, session 14, with the smoothest fitting line, had the lowest success rate, and overall, Lederberg had the highest continuous correct answer rate of any mouse.
+
+
+## 3 Data integration.
+
+```{r}
+
+data <- data %>% dplyr::select(n_brain_area, mean_spk, nonzero_spk, spk_1, left_right)
+all.trial.summary <- cbind(all.trial.summary, data)
+
+
+all.trial.summary <- all.trial.summary[, colSums(is.na(all.trial.summary)) / nrow(all.trial.summary) < 0.2]
+
+na_cols <- apply(all.trial.summary, 2, function(x) any(is.na(x)))
+
+for (col in names(all.trial.summary)[na_cols]) {
+  mean_val <- mean(all.trial.summary[[col]], na.rm = TRUE)
+  all.trial.summary[[col]] <- ifelse(is.na(all.trial.summary[[col]]), mean_val, all.trial.summary[[col]])
+}
+```
+
+In my data farm, there are 10 variables:
+  root: the mean of spikes of brain area root
+  feedback: feedback type (1,-1)
+  left contr.: left stimuli level
+  right contr.: right stimuli level
+  id: test number
+  n_brain_area: brain regions that were activated during the test
+  mean_spk: mean of number of spikes 
+  nonzero_spks: non zero spikes/all spikes
+  spk_1: spikes=1/all spikes
+  left_right: compare between left and right stimuli level (Right Greater: right stimuli level > left; Left Greater:    left stimuli level > right; Equal,Zero: both sides are equal; Equal, not zero: two sides are equal, but not equal 0)
+  
+
+## 4 Predictive modeling.
+
+Before modeling, first read the test data and perform the same processing on the test data as the training data.
+
+```{r}
+
+data2 <- data.frame()
+
+for (i in 1:2) {
+  ses <- readRDS(paste('/Users/selia/OneDrive/Desktop/STA141/test/test',i,'.rds',sep=''))
+  session[[i]] <- ses
+  num <- length(ses$feedback_type)
+  dat <- data.frame(
+    mouse = rep(ses$mouse_name, num),
+    contrast_left = ses$contrast_left,
+    contrast_right = ses$contrast_right,
+    feedback_type = ses$feedback_type,
+    n_brain_area = rep(length(unique(ses$brain_area)), num),
+    mean_spk = unlist(lapply(ses$spks, mean)),
+    max_spk = unlist(lapply(ses$spks, max)),
+    nonzero_spk = unlist(lapply(ses$spks, function(x) {
+      sum(x != 0) / nrow(x) / ncol(x)
+    })),
+    spk_1 = unlist(lapply(ses$spks, function(x) {
+      sum(x == 1) / nrow(x) / ncol(x)
+    }))
+  )
+  data2 <- rbind(data2, dat)
+}
+
+data2 <- data2 %>%
+  mutate(left_right = ifelse(contrast_left > contrast_right, 1, ifelse(contrast_left == contrast_right, 0, -1)))
+
+data2 <- data2 %>%
+  mutate(feedback_type = ifelse(feedback_type == 1, 1, 0))
+
+data2 <- data2 %>%
+  mutate(left_right = case_when(
+    contrast_left > contrast_right ~ "Left Greater",
+    contrast_left < contrast_right ~ "Right Greater",
+    contrast_left != 0 ~ "Equal, Not Zero",
+    TRUE ~ "Equal, Zero"
+  ))
+
+average_spike_area <- function(i.t, this_session) {
+  spk.trial <- this_session$spks[[i.t]]
+  area <- this_session$brain_area
+  spk.count <- apply(spk.trial, 1, sum)
+  spk.average.tapply <- tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+}
+
+
+session2 <- list()
+for (i in 1:2) {
+  session2[[i]] <- readRDS(paste('/Users/selia/OneDrive/Desktop/STA141/test/test',i,'.rds',sep=''))
+}
+
+all.trial.summary2 <- data.frame()
+for (i.s in 1:2) {
+  n.trial <- length(session2[[i.s]]$feedback_type)
+  n.area <- length(unique(session2[[i.s]]$brain_area))
+  trial.summary <- matrix(nrow = n.trial, ncol = n.area + 1 + 2 + 1)
+  for (i.t in 1:n.trial) {
+    trial.summary[i.t, ] <- c(
+      average_spike_area(i.t, this_session = session2[[i.s]]),
+      session2[[i.s]]$feedback_type[i.t],
+      session2[[i.s]]$contrast_left[i.t],
+      session2[[i.s]]$contrast_right[i.s],
+      i.t
+    )
+  }
+  colnames(trial.summary) <- c(names(average_spike_area(i.t, this_session = session2[[i.s]])), "feedback", "left contr.", "right contr.", "id")
+  trial.summary <- as.data.frame(trial.summary)
+  all.trial.summary2 <- rbind.fill(all.trial.summary2, trial.summary)
+}
+
+data2 <- data2 %>% select(n_brain_area, mean_spk, nonzero_spk, spk_1, left_right)
+
+all.trial.summary2 <- cbind(all.trial.summary2, data2)
+
+all.trial.summary2 <- all.trial.summary2[, colnames(all.trial.summary)]
+
+na_cols <- apply(all.trial.summary2, 2, function(x) any(is.na(x)))
+
+for (col in names(all.trial.summary2)[na_cols]) {
+  mean_val <- mean(all.trial.summary2[[col]], na.rm = TRUE)
+  all.trial.summary2[[col]] <- ifelse(is.na(all.trial.summary2[[col]]), mean_val, all.trial.summary2[[col]])
+}
+```
+
+Turn left_right into number variables.
+
+```{r}
+all.trial.summary <- all.trial.summary %>%
+  mutate(left_right_Left_Greater = ifelse(left_right == "Left Greater", 1, 0)) %>%
+  mutate(left_right_Right_Greater = ifelse(left_right == "Right Greater", 1, 0)) %>%
+  mutate(left_right_Equal_Not_Zero = ifelse(left_right == "Equal, Not Zero", 1, 0)) %>%
+  dplyr::select(-left_right)
+
+all.trial.summary2 <- all.trial.summary2 %>%
+  mutate(left_right_Left_Greater = ifelse(left_right == "Left Greater", 1, 0)) %>%
+  mutate(left_right_Right_Greater = ifelse(left_right == "Right Greater", 1, 0)) %>%
+  mutate(left_right_Equal_Not_Zero = ifelse(left_right == "Equal, Not Zero", 1, 0)) %>%
+  dplyr::select(-left_right)
+```
+
+
+Logistic Regression.
+
+We can try to find the “best model” sequentially using stepwise regression procedures.
+
+Forward selection: Start from a simple model (normally the intercept only model), and add variables that give the biggest improvement of the criterion. Repeat the process until the criterion can not be improved by adding a variable.
+
+Backward elimination: Start from a full model and delete variables that give the biggest improvement of the criterion. Repeat the process until the criterion can not be improved anymore.
+
+Forward or Backward stepwise: At each step, evaluate all possible additions and deletions of a single variable, and choose the action that improves the criterion the most (it may be an addition or a deletion). Repeat until no improvement can be made.
+
+
+```{r}
+none_mod <- glm(as.factor(feedback) ~ 1, all.trial.summary, family = "binomial")
+full_mod <- glm(as.factor(feedback) ~ ., all.trial.summary, family = "binomial")
+
+library(MASS)
+
+stepAIC(none_mod,
+  scope = list(upper = full_mod, lower = ~1), direction = "forward",
+  k = 2, trace = FALSE
+)
+```
+
+
+Backward elimination based on AIC.
+
+
+```{r}
+stepAIC(full_mod,
+  scope = list(upper = full_mod, lower = ~1), direction = "backward",
+  k = 2, trace = FALSE
+)
+```
+
+
+Forward stepwise based on AIC.
+
+
+```{r}
+stepAIC(none_mod,
+  scope = list(upper = full_mod, lower = ~1), direction = "both",
+  k = 2, trace = FALSE
+)
+```
+
+
+Backward stepwise based on AIC.
+
+
+```{r}
+stepAIC(full_mod,
+  scope = list(upper = full_mod, lower = ~1), direction = "both",
+  k = 2, trace = FALSE
+)
+```
+
+
+The “best” model based on forward selection, backward elimination and forward or Backward stepwise with AIC is “feedback ~ mean_spk + left_right_Equal_Not_Zero + n_brain_area + id + left_right_Left_Greater + left_right_Right_Greater + root”.
+
+
+```{r}
+Logistic_mod <- glm(as.factor(feedback) ~ mean_spk + left_right_Equal_Not_Zero + n_brain_area + id + left_right_Left_Greater + left_right_Right_Greater + root, all.trial.summary, family = "binomial")
+```
+
+### Support Vector Machine.
+
+```{r}
+library(e1071)
+
+svm_mod <- svm(
+  formula = as.character(feedback) ~ .,
+  data = all.trial.summary,
+  type = "C-classification",
+  kernel = "linear"
+)
+```
+
+### Decision tree.
+
+
+```{r}
+library(rpart)
+rpart_mod <- rpart(
+  formula = as.character(feedback) ~ .,
+  data = all.trial.summary
+)
+```
+
+
+
+
+
+## 5 Prediction performance on the test sets
+
+
+```{r}
+prob_pred1 <- predict(Logistic_mod, type = "response", newdata = all.trial.summary2 %>% dplyr::select(-feedback))
+y_pred1 <- ifelse(prob_pred1 > 0.5, 1, -1)
+
+prob_pred2 <- predict(svm_mod, newdata = all.trial.summary2 %>% dplyr::select(-feedback))
+y_pred2 <- as.numeric(as.character(prob_pred2))
+
+prob_pred3 <- predict(rpart_mod, type = "prob", newdata = all.trial.summary2 %>% dplyr::select(-feedback))
+y_pred3 <- ifelse(prob_pred3[, 2] > 0.5, 1, -1)
+```
+
+Making the Confusion Matrix, precision, recall and f1.
+
+```{r}
+cm1 <- table(all.trial.summary2 %>% dplyr::pull(feedback), y_pred1)
+cm2 <- table(all.trial.summary2 %>% dplyr::pull(feedback), y_pred3)
+cm3 <- table(all.trial.summary2 %>% dplyr::pull(feedback), y_pred3)
+
+print("Confusion Matrix for Logistic Regression:")
+cm1
+print("Confusion Matrix for SVM:")
+cm2
+print("Confusion Matrix for Decision Tree:")
+cm3
+
+result <- data.frame(
+  "model" = c("Logistic Regression", "SVM", "Decision Tree"),
+  "precision" = rep(0, 3),
+  "recall" = rep(0, 3),
+  "f1" = rep(0, 3)
+)
+
+
+result$precision[1] <- sum(y_pred1 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(y_pred1 == 1)
+
+result$precision[2] <- sum(y_pred2 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(y_pred2 == 1)
+
+result$precision[3] <- sum(y_pred3 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(y_pred3 == 1)
+
+result$recall[1] <- sum(y_pred1 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(all.trial.summary2 %>% dplyr::pull(feedback) == 1)
+
+result$recall[2] <- sum(y_pred2 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(all.trial.summary2 %>% dplyr::pull(feedback) == 1)
+
+result$recall[3] <- sum(y_pred3 == 1 & all.trial.summary2 %>% dplyr::pull(feedback) == 1) / sum(all.trial.summary2 %>% dplyr::pull(feedback) == 1)
+
+result$f1 <- 2 * result$precision * result$recall / (result$precision + result$recall)
+
+kable(result, caption = "result")
+```
+
+First, from the confusion matrix, we can see that the Logistic Regression model correctly predicted 1 negative sample (-1), but the SVM and the Decision Tree don't correctly predicted any negative samples. This means that the Logistic Regression model slightly outperforms the other two models in the prediction of negative samples.
+
+Then, in terms of the prediction metrics (precision, recall and F1 score), SVM and Decision Tree have the same precision, recall and F1 score, which are slightly higher than the Logistic Regression model. SVM and Decision Tree have higher recall (1.000) on the prediction of positive samples (1), which means that they are able to identify all the positive samples. However, Logistic Regression had a slightly lower recall (0.993), indicating that it failed to identify all the positives.
+
+In summary, although Logistic Regression is slightly better at predicting negative samples, SVM and Decision Tree perform better in the overall prediction performance, especially for the prediction of positive samples. Therefore, among the three models, SVM and Decision Tree may be better choices. However, it is worth noting that these results may be affected by the characteristics of the dataset, so in practice, you may need to choose the right model based on your situation and requirements.
+
+## 6 Discussion
+
+In this study, we analyzed the factors that may affect the choice of mice using data collected by Steinmetz et al. (2019). I explored the relationship between variables such as the number of brain areas, mean spike counts, and the success rate of the mice in the given trials. I also talk about the effect of different visual stimuli levels on the mice's success rate. Based on my analysis, I built a predictive model for mouse choices using logistic regression, support vector machine (SVM), and decision tree algorithms.
+
+My analysis revealed that the success rate of the mice varied depending on the number of brain areas stimulated and the visual stimuli levels. For example, Cori showed a higher success rate when the maximum number of brain areas was stimulated, whereas Forssmann, Hench, and Lederberg showed higher success rates when the minimum number of brain areas was stimulated. Furthermore, we found that the mice generally had a higher success rate when the contrast between the left and right stimuli was greater.
+
+I built predictive models using logistic regression, SVM, and decision tree algorithms to predict the mice's behavior. The performance of these models was evaluated using precision, recall, and F1 score metrics. The results showed that the SVM and decision tree models had similar performance, with both having a precision of 0.725, a recall of 1.0, and an F1 score of 0.8406. The logistic regression model had a slightly lower performance, with a precision of 0.7236, a recall of 0.9931, and an F1 score of 0.8372.
+
+It is important to note that my analysis has some limitations. First, the sample size is relatively small, with only 18 sessions and four mice. This may limit the generalizability of our findings. Second, I did not consider the potential impact of other factors, such as the mice's age, sex, or genetic background, on their behavior. Finally, my predictive models could be further refined and improved by incorporating additional variables or using more advanced machine learning techniques.
+
+In conclusion, my analysis provided valuable insights into the factors that may influence the choice of mice and allowed us to build predictive models for their behavior. These findings could be useful for researchers studying the neural basis of decision-making in mice and may contribute to the development of more effective experimental designs and interventions.
